@@ -1,144 +1,64 @@
 package hello.jdbc.repository;
 
 import hello.jdbc.domain.Member;
-import hello.jdbc.repository.ex.MyDbException;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.datasource.DataSourceUtils;
-import org.springframework.jdbc.support.JdbcUtils;
-import org.springframework.jdbc.support.SQLErrorCodeSQLExceptionTranslator;
-import org.springframework.jdbc.support.SQLExceptionTranslator;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 import javax.sql.DataSource;
-import java.sql.*;
-import java.util.NoSuchElementException;
 
 /***
- * SQLExceptionTranslator 추가
+ * JDBC Template 사용
  */
 
 @Slf4j
-public class MemberRepositoryV4_2 implements MemberRepository{
+public class MemberRepositoryV5 implements MemberRepository{
 
-    private final DataSource dataSource;
-    private final SQLExceptionTranslator exTranslator;
+    private final JdbcTemplate template;
+
 
     //DataSource 의존 (주입 필요)
-    public MemberRepositoryV4_2(DataSource dataSource) {
-        this.dataSource = dataSource;
-        this.exTranslator = new SQLErrorCodeSQLExceptionTranslator(dataSource);
+    public MemberRepositoryV5(DataSource dataSource) {
+        this.template = new JdbcTemplate(dataSource);
     }
 
 
     @Override
     public Member save(Member member){
         String sql = "insert into member(member_id, money) values (?, ?)";
+        template.update(sql, member.getMemberId(), member.getMoney());
 
-        Connection con = null;
-        PreparedStatement pstmt = null;
-
-        try{
-            con = getConnection();
-            //pstmt ==> sql "?" 바인딩하는 값
-            pstmt = con.prepareStatement(sql);
-            pstmt.setString(1, member.getMemberId());
-            pstmt.setInt(2, member.getMoney());
-            pstmt.executeUpdate();
-            return member;
-        }catch (SQLException e) {
-            throw exTranslator.translate("save", sql, e);
-        }finally{
-            //무조건 con 종료 해줘야함 (외부 리소스 사용중)
-            close(con, pstmt, null);
-        }
-
+        return member;
     }
 
     @Override
     public Member findById(String memberId) {
         String sql = "select * from member where member_id = ?";
 
-        Connection con = null;
-        PreparedStatement pstmt = null;
-        ResultSet rs = null;
-
-        try{
-            con = getConnection();
-            pstmt = con.prepareStatement(sql);
-            pstmt.setString(1, memberId);
-
-            //조회 결과
-            rs = pstmt.executeQuery();
-            if (rs.next()){ // 처음에는 아무것도 안가리키다, next()호출하면 첫번째부터 순차적으로
-                Member member = new Member();
-                member.setMemberId(rs.getString("member_id"));
-                member.setMoney(rs.getInt("money"));
-                return member;
-            }else{
-                throw new NoSuchElementException("member not found memberId="+memberId);
-            }
-        } catch (SQLException e) {
-            throw exTranslator.translate("findById", sql, e);
-        }finally {
-            close(con,pstmt,rs);
-        }
+        return template.queryForObject(sql, memberRowMapper(), memberId);
+    }
+    // 조회 맵핑 (템플릿 콜백 패턴)
+    private RowMapper<Member> memberRowMapper(){
+        return (rs, rowNum) -> {
+            Member member =new Member();
+            member.setMemberId(rs.getString("member_id"));
+            member.setMoney(rs.getInt("money"));
+            return member;
+        };
     }
 
     @Override
     public void update(String memberId, int money){
         String sql = "update member set money=? where member_id=?";
-
-        Connection con = null;
-        PreparedStatement pstmt = null;
-
-        try {
-            con = getConnection();
-            pstmt = con.prepareStatement(sql);
-            pstmt.setInt(1, money);
-            pstmt.setString(2, memberId);
-            int resultSize = pstmt.executeUpdate();
-            log.info("resultSize={}", resultSize);
-        } catch (SQLException e) {
-            throw exTranslator.translate("update", sql, e);
-        }finally {
-            close(con, pstmt, null);
-        }
+        template.update(sql, money, memberId);
 
     }
 
 
     @Override
     public void delete(String memberId){
-        String sql = "delete from member where member_id=?";
-
-        Connection con = null;
-        PreparedStatement pstmt = null;
-
-        try{
-            con = getConnection();
-            pstmt = con.prepareStatement(sql);
-            pstmt.setString(1, memberId);
-            pstmt.executeUpdate();
-        }catch (SQLException e){
-            throw exTranslator.translate("delete", sql, e);
-        }finally {
-            close(con, pstmt, null);
-        }
+        String sql = "delete from member where  member_id=?";
+        template.update(sql, memberId);
     }
 
-    private void close(Connection con, Statement stmt, ResultSet rs){
-        //커넥션 풀 반환
-        JdbcUtils.closeResultSet(rs);
-        JdbcUtils.closeStatement(stmt);
-        //주의! 트랜잭션 동기화를 사용하려면 DataSourceUtils를 사용해야한다.
-        DataSourceUtils.releaseConnection(con, dataSource);
-
-    }
-
-    private Connection getConnection() throws SQLException {
-        // 주의! 트랜잭션 동기화를 사용하려면 DataSourceUtils를 사용해야함
-        Connection con = DataSourceUtils.getConnection(dataSource);
-        log.info("get connection={}",con);
-
-        return con;
-    }
 }
